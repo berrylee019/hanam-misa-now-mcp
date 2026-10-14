@@ -32,4 +32,6 @@ def get_waiting_and_summary(place_name: str) -> str:
     return f"{place_name} - 최근 리뷰 요약: '주말 12시 기준 대기 10분', '유모차 입장 가능, 테이블 간격 넓음' (요약 출처 표시 예정 - 모두의 AI 핵심 요구사항)"
 
 if __name__ == "__main__":
-    mcp.run(transport="sse", host="0.0.0.0", port=8080)
+    import os
+    port = int(os.environ.get("PORT", 8080))  # Render가 주는 PORT 사용
+    mcp.run(transport="sse", host="0.0.0.0", port=port)
