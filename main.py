@@ -21,27 +21,16 @@ def get_parking_info(place: str) -> str:
 def get_waiting_summary(place: str) -> str:
     return f"{place} 주말 12-14시 혼잡"
 
-# SSE 전송용과 HTTP 전송용을 각각 생성
-try:
-    sse_app = mcp.sse_app(path="/sse")
-except TypeError:
-    sse_app = mcp.sse_app()
-
-try:
-    http_app = mcp.http_app(path="/mcp")
-except TypeError:
-    http_app = mcp.http_app()
+# 최신 fastmcp는 http_app 하나가 /mcp와 /sse를 모두 처리
+http_app = mcp.http_app(path="/")
 
 async def health(request):
     return PlainTextResponse("OK - 하남미사 지금갈곳 Online")
 
-# 진짜 라우팅 - /sse는 sse_app으로, /mcp는 http_app으로
 app = Starlette(routes=[
     Route("/", endpoint=health),
     Route("/health", endpoint=health),
-    Mount("/sse", app=sse_app),
-    Mount("/mcp", app=http_app),
-    Mount("/", app=http_app),  # 나머지도 http_app이 처리
+    Mount("/", app=http_app),
 ])
 
 if __name__ == "__main__":
