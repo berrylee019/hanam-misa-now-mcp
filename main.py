@@ -57,8 +57,19 @@ def get_parking_info(place: str) -> str:
 def get_waiting_summary(place: str) -> str:
     return f"{place} 대기 요약 - 하남미사 지금갈곳: 주말 12시-2시 붐빔, 평일 한적함, 테라스 애견동반 자리는 여유 있음"
 
-app = mcp.sse_app()
+# --- 마지막 부분 통째로 교체 ---
+from starlette.routing import Mount
 
-import os
-port = int(os.environ.get("PORT", 10000))
-uvicorn.run(app, host="0.0.0.0", port=port)
+sse_app = mcp.sse_app()
+
+# /mcp 와 /sse 둘 다 되게 하기 (카카오 심사, PlayMCP 모두 통과용)
+app = Starlette(routes=[
+    Mount("/", app=sse_app),
+    Mount("/mcp", app=sse_app),
+    Mount("/sse", app=sse_app),
+])
+
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
