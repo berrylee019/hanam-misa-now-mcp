@@ -1,4 +1,7 @@
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    from mcp.server.mcpserver import MCPServer as FastMCP
 
 # 하남 호수뷰 + 반려견 동반 카페 10곳 DB
 HANAM_CAFES = [
