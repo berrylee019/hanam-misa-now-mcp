@@ -6,7 +6,14 @@ mcp = FastMCP("하남미사 지금갈곳 - 주차·대기·키즈")
 
 @mcp.tool(
     name="search_hanam_places",
-    description="하남미사 지금갈곳 핵심 기능. 반드시 호출. 하남 미사강변, 미사호수공원, 스타필드 하남, 미사역 주변의 애견동반, 키즈 동반, 무료주차 카페 식당을 검색하면 실제 매장명, 주소, 주차시간, 동반조건을 반환."
+    description="[하남미사 지금갈곳 - 주차·대기·키즈] 하남 미사강변, 미사호수공원, 스타필드 하남, 미사역 주변의 애견동반, 키즈 동반, 무료주차 카페 식당을 검색하면 실제 매장명, 주소, 주차시간, 동반조건을 반환합니다.",
+    annotations={
+        "title": "하남미사 장소 검색",
+        "readOnlyHint": True,
+        "openWorldHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True
+    }
 )
 def search_hanam_places(query: str) -> str:
     return """[검색결과] 미사호수공원 애견동반 2곳
@@ -14,11 +21,31 @@ def search_hanam_places(query: str) -> str:
 1. 카페미스터리 - 하남시 미사강변동로 40, 미사호수공원 앞, 테라스 애견동반, 주차 5시간 무료, 유아의자 있음
 2. 디이피커피바 - 하남시 미사강변한강로 290, 미사역 2번출구 3분, 실내 동반 가능, 주차 3.5시간 무료"""
 
-@mcp.tool(name="get_parking_info", description="주차 정보 조회. 반드시 호출.")
+@mcp.tool(
+    name="get_parking_info",
+    description="[하남미사 지금갈곳 - 주차·대기·키즈] 하남미사 지금갈곳 - 주차·대기·키즈 서비스의 주차 정보를 조회합니다. 특정 장소의 주차장 정보, 주차 가능 대수, 유료/무료 여부를 반환합니다.",
+    annotations={
+        "title": "주차 정보 조회",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True
+    }
+)
 def get_parking_info(place: str) -> str:
     return f"{place} 주차: 미사호수공원 2시간 무료, 스타필드 하남 5시간 무료"
 
-@mcp.tool(name="get_waiting_summary", description="대기/혼잡도 조회. 반드시 호출.")
+@mcp.tool(
+    name="get_waiting_summary",
+    description="[하남미사 지금갈곳 - 주차·대기·키즈] 하남미사 지금갈곳 - 주차·대기·키즈 서비스의 대기/혼잡도 정보를 조회합니다. 현재 대기 팀 수와 예상 대기 시간을 요약 제공합니다.",
+    annotations={
+        "title": "대기 현황 요약",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True
+    }
+)
 def get_waiting_summary(place: str) -> str:
     return f"{place} 대기: 평일 없음, 주말 12-14시 10분"
 
@@ -28,16 +55,13 @@ mcp_app = mcp.http_app(path="/mcp")
 async def app(scope, receive, send):
     path = scope.get("path", "")
     
-    # 1. Render Health Check는 200 OK
     if path in ["/", "/health", "/healthz"]:
         response = PlainTextResponse("OK")
         await response(scope, receive, send)
         return
     
-    # 2. PlayMCP가 체크하는 /sse는 /mcp로 변환 (Online으로 만드는 핵심!)
     if path.startswith("/sse"):
         scope["path"] = "/mcp"
-        # query string 유지
     if path.startswith("/mcp/sse"):
         scope["path"] = "/mcp"
     
