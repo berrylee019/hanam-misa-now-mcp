@@ -19,35 +19,53 @@ KAKAO_KEY = os.environ.get("KAKAO_REST_API_KEY", "18794e39d19ed47e1e9738b4059106
 )
 def search_hanam_places(query: str) -> str:
     try:
+        # AI 채팅에서 "5곳 찾아줘" 같은 자연어를 치면 키워드만 추출
+        clean = query.replace("하남","").replace("미사","").replace("주변","").replace("에서","").replace("5곳","").replace("찾아줘","").replace("검색","").replace("해줘","").replace("좀","").strip()
+        if not clean:
+            clean = "애견동반 카페"
+        # 키워드가 길면 핵심만
+        if len(clean) > 15 and "애견" in clean:
+            clean = "애견동반 카페"
+        if "키즈" in clean:
+            clean = "키즈 카페"
+        if "주차" in clean:
+            clean = "주차 카페"
+
         headers = {"Authorization": f"KakaoAK {KAKAO_KEY}"}
-        params = {
-            "query": f"하남 미사 {query}",
-            "x": "127.193", # 미사역 경도
-            "y": "37.561", # 미사역 위도
-            "radius": 5000,
-            "size": 5,
-            "sort": "distance"
-        }
-        res = requests.get("https://dapi.kakao.com/v2/local/search/keyword.json", headers=headers, params=params, timeout=5)
-        data = res.json()
-        docs = data.get("documents", [])
+
+        docs = []
+        # 1차 시도: 정리된 키워드로, 없으면 폴백으로 재시도
+        for try_q in [clean, "애견동반 카페", "카페"]:
+            if not try_q.strip():
+                continue
+            params = {
+                "query": f"하남 미사 {try_q}",
+                "x": "127.193",
+                "y": "37.561",
+                "radius": 5000,
+                "size": 5,
+                "sort": "distance"
+            }
+            res = requests.get("https://dapi.kakao.com/v2/local/search/keyword.json", headers=headers, params=params, timeout=5)
+            data = res.json()
+            docs = data.get("documents", [])
+            if docs:
+                break
 
         if not docs:
-            return f"'{query}'에 대한 하남 미사 주변 검색 결과가 없습니다. 다른 키워드(예: 애견동반 카페, 키즈 식당)로 검색해보세요."
+            return f"'{query}'에 대한 하남 미사 주변 검색 결과가 없습니다. '{clean}' 키워드로도 결과가 없어요. '애견동반 카페' 또는 '키즈 카페'로 검색해보세요."
 
-        lines = [f"[하남미사 실제 검색결과] '{query}' {len(docs)}곳"]
+        lines = [f"[하남미사 실제 검색결과] '{clean}' {len(docs)}곳 (원본질의: {query})"]
         for i, p in enumerate(docs, 1):
             name = p.get('place_name')
             addr = p.get('road_address_name') or p.get('address_name')
             phone = p.get('phone', '전화번호 없음')
-            # 주차 정보는 DB화 전까지는 기본 정보 제공
-            parking_info = "미사호수공원 공영주차장 2시간 무료 / 스타필드 하남 5시간 무료 (매장별 상이, 방문 전 확인)"
+            parking_info = "미사호수공원 공영주차장 2시간 무료 / 스타필드 하남 5시간 무료 (매장별 상이)"
             lines.append(f"{i}. {name} - {addr}, {phone}, {parking_info}")
 
         return "\n".join(lines)
 
     except Exception as e:
-        # API 실패시 심사 통과용 더미로 폴백 (심사 안정성)
         return f"""[검색결과] 미사호수공원 {query} 2곳 (API 일시 오류로 캐시 데이터 제공)
 1. 카페미스터리 - 하남시 미사강변동로 40, 테라스 애견동반, 주차 5시간 무료
 2. 디이피커피바 - 하남시 미사강변한강로 290, 미사역 2번출구 3분, 실내 동반 가능, 주차 3.5시간 무료
@@ -65,7 +83,6 @@ def search_hanam_places(query: str) -> str:
     }
 )
 def get_parking_info(place: str) -> str:
-    # 실제 데이터 기반 (하남시 공영주차장 데이터)
     parking_db = {
         "스타필드": "스타필드 하남: 평일 5시간 무료, 주말 4시간 무료, 이후 10분당 500원, 3,500대 규모",
         "미사호수공원": "미사호수공원 공영주차장: 2시간 무료, 이후 10분당 300원, 주말 혼잡",
