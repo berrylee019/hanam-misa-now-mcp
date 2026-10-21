@@ -41,13 +41,39 @@ LOCAL_WORDS = ["하남", "미사", "스타필드"]
 
 # 운영사가 공지한 주차 정책 (방문 전 공식 채널로 재확인 필요)
 # 값 변경 시 checked 날짜도 갱신하세요.
-PARKING_POLICY = {
+# 공식 페이지에서 직접 확인한 값만 넣으세요. 공지(notices)는 기간이 끝나면 자동으로 숨겨집니다.
+# from/until: "YYYY-MM-DD" (None이면 기간 제한 없음). 공지가 바뀌면 이 표만 수정하세요.
+PARKING_POLICY: dict = {
     "스타필드": {
-        "text": "스타필드 하남 공식 안내 기준 무료 주차 시간 및 초과 요금 적용 (평일/주말 상이)",
-        "source": "스타필드 하남 공식 홈페이지",
-        "checked": "미확인",
+        "match": ["스타필드", "미사대로 750"],   # 장소명 또는 주소에 포함되면 적용
+        "summary": "주차요금 무료 (스타필드 하남 공식 주차 안내 기준)",
+        "source": "https://www.starfield.co.kr/hanam/about/parkingInfo.do",
+        "checked": "2026-10-21",
+        "notices": [
+            {"text": "지상 주차장 및 전기차 충전소(4F) 이용 불가", "from": "2026-10-12", "until": "2026-10-22"},
+            {"text": "메가박스 조조·심야 영화 관람 시 야외주차장 이용", "from": "2026-10-12", "until": "2027-01-22"},
+            {"text": "10시 이전, 23시 이후 실내 주차장 이용 불가 (주차장 공사)", "from": "2026-10-12", "until": "2027-01-22"},
+            {"text": "트레이더스 홀세일 클럽 이용 고객은 지하주차장 이용", "from": None, "until": None},
+        ],
     },
 }
+
+
+def policy_lines(place_name: str, query: str, address: str) -> list:
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    out = []
+    for v in PARKING_POLICY.values():
+        hay = f"{place_name} {query} {address}"
+        if not any(m in hay for m in v["match"]):
+            continue
+        out.append(f"- 운영사 안내: {v['summary']} (출처: {v['source']}, 확인일: {v['checked']})")
+        active = [n for n in v["notices"]
+                  if (not n.get("from") or n["from"] <= today) and (not n.get("until") or today <= n["until"])]
+        for n in active:
+            period = f" ({n['from']} ~ {n['until']})" if n.get("from") and n.get("until") else ""
+            out.append(f"- 이용 공지: {n['text']}{period}")
+        break
+    return out
 
 # ---------------------------------------------------------------- 공통 유틸
 _cache: dict = {}
@@ -118,7 +144,7 @@ def nearby_parking(x: float, y: float, radius: int = 300, size: int = 3):
 
 def fmt_parking(lots) -> str:
     if not lots:
-        return "반경 내 등록된 주차장 없음"
+        return "반경 내 등록된 주차장 정보 없음(매장 문의 필요)"
     return "; ".join(f"{l['name']}({l['distance_m']}m)" for l in lots)
 
 
@@ -216,8 +242,18 @@ def search_hanam_places(
             return (f"'{query}' 조건에 맞는 하남 미사 장소를 찾지 못했습니다. "
                     "업종이나 키워드를 바꿔 다시 시도해주세요. (예: 카페, 식당, 키즈카페)")
 
-        ranked = sorted(found.values(),
-                        key=lambda t: (-t[0], int(t[1].get("distance") or 10**9)))[:limit]
+        pool = sorted(found.values(),
+                      key=lambda t: (-t[0], int(t[1].get("distance") or 10**9)))
+        evidence: dict = {}
+        if kids:
+            from concurrent.futures import ThreadPoolExecutor
+            cand = pool[:10]
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                counts = list(ex.map(lambda t: kids_evidence(t[1]["place_name"]), cand))
+            evidence = {t[1]["id"]: c for t, c in zip(cand, counts)}
+            pool = sorted(pool, key=lambda t: (-t[0], -evidence.get(t[1]["id"], 0),
+                                               int(t[1].get("distance") or 10**9)))
+        ranked = pool[:limit]
 
         notes = []
         if kids:
@@ -237,8 +273,13 @@ def search_hanam_places(
             if d.get("phone"):
                 line += f" | ☎ {d['phone']}"
             line += f" | {d.get('place_url', '')}"
-            if kids and score >= 2 and "키즈" in d["place_name"] + d.get("category_name", ""):
-                line += " | 아이동반: 키즈 업종/키워드 일치"
+            if kids:
+                if "키즈" in d["place_name"] + d.get("category_name", ""):
+                    line += " | 아이동반: 키즈 업종/키워드 일치"
+                n = evidence.get(d["id"])
+                if n is not None:
+                    line += (f" | 아이동반 후기 언급 {n}건(최근 6개월 블로그)" if n
+                             else " | 아이동반 후기 언급 확인되지 않음(매장 확인 필요)")
             if pet and score >= 2 and any(w in d["place_name"] + d.get("category_name", "") for w in ["애견", "반려"]):
                 line += " | 애견동반: 애견 업종/키워드 일치"
             if parking:
@@ -246,25 +287,76 @@ def search_hanam_places(
                 line += f" | 주변 주차장(300m): {fmt_parking(lots)}"
             lines.append(line)
 
-        lines.append("출처: 카카오 로컬 API. 동반 가능 여부·운영시간·주차 요금은 방문 전 매장에 확인하세요.")
+        lines.append("출처: 카카오 로컬 API, 카카오 검색 API(블로그). 위에 표시된 항목 외의 정보"
+                     "(주차 가능 여부·아이 메뉴·유아의자 보유 등)는 확인되지 않았으므로 추측하지 말고 "
+                     "방문 전 매장에 확인하도록 안내하세요.")
         return "\n".join(lines)
     except Exception as e:
         return f"검색 중 오류가 발생했습니다: {e}"
 
 
 # ---------------------------------------------------------------- Tool 2
-def _find_place(place: str):
-    """이름으로 하남 미사 일대 장소 1곳 조회"""
+GENERIC_WORDS = ["식당", "카페", "맛집", "음식점", "레스토랑", "가게"]
+
+
+def _candidates(place: str, size: int = 5):
     anchor = detect_anchor(place)
     x, y = resolve_anchor(anchor)
     docs = kakao_get("/local/search/keyword.json", {
-        "query": f"하남 {place}", "x": x, "y": y, "radius": 10000, "size": 5,
+        "query": f"하남 {place}", "x": x, "y": y, "radius": 10000, "size": 15,
     }).get("documents", [])
+    out = []
     for d in docs:
         addr = d.get("road_address_name") or d.get("address_name") or ""
-        if "하남" in addr:
-            return d
-    return None
+        if "하남" in addr and d.get("category_group_code") != "PK6":
+            out.append(d)
+    return out[:size]
+
+
+def _is_generic(place: str) -> bool:
+    """'스타필드 하남 식당'처럼 특정 상호가 없는 입력인지"""
+    if not any(g in place for g in GENERIC_WORDS):
+        return False
+    rest = place
+    for w in LOCAL_WORDS + ["미사역", "미사강변", "미사호수공원", "근처", "주변"] + GENERIC_WORDS:
+        rest = rest.replace(w, " ")
+    return not rest.strip()
+
+
+def _find_place(place: str):
+    """이름으로 하남 미사 일대 장소 1곳 조회 (주차장 제외 첫 결과)"""
+    cands = _candidates(place, size=1)
+    return cands[0] if cands else None
+
+
+def _ask_specific(place: str) -> str:
+    cands = _candidates(place, size=5)
+    names = ", ".join(c["place_name"] for c in cands) or "(후보 없음)"
+    return (f"'{place}'는 특정 매장이 아니라 종류만 지정된 입력입니다. 정확한 상호명으로 다시 요청해주세요. "
+            f"후보: {names}. (search_hanam_places로 먼저 매장을 검색할 수 있습니다.)")
+
+
+def kids_evidence(name: str) -> int:
+    """최근 6개월 블로그 후기 중 아이 동반 관련 언급 건수"""
+    try:
+        since = datetime.now(KST) - timedelta(days=183)
+        docs = kakao_get("/search/blog", {
+            "query": f"{name} 아이랑 유아의자", "sort": "recency", "size": 30,
+        }).get("documents", [])
+        n = 0
+        for doc in docs:
+            try:
+                if datetime.fromisoformat(doc["datetime"]) < since:
+                    continue
+            except Exception:
+                continue
+            text = strip_tags(doc.get("title", "") + " " + doc.get("contents", ""))
+            if name.split()[0] in text and any(w in text for w in
+                    ["유아의자", "아기의자", "유아식기", "아이랑", "아이와", "유모차", "키즈", "아기랑"]):
+                n += 1
+        return n
+    except Exception:
+        return 0
 
 
 @mcp.tool(
@@ -280,6 +372,8 @@ def get_parking_info(place: str) -> str:
     if not place:
         return "장소명을 입력해주세요."
     try:
+        if _is_generic(place):
+            return _ask_specific(place)
         d = _find_place(place)
         if not d:
             return f"'{place}'을(를) 하남 미사 일대에서 찾지 못했습니다. 정확한 상호명으로 다시 입력해주세요."
@@ -287,10 +381,8 @@ def get_parking_info(place: str) -> str:
         lots = nearby_parking(float(d["x"]), float(d["y"]), radius=500, size=5)
         lines = [f"[주차 정보] {d['place_name']} ({d.get('road_address_name') or d.get('address_name')})"]
 
-        for k, v in PARKING_POLICY.items():
-            if k in d["place_name"] or k in place:
-                lines.append(f"- 운영사 안내: {v['text']} (출처: {v['source']}, 확인일: {v['checked']})")
-                break
+        lines += policy_lines(d["place_name"], place,
+                              d.get("road_address_name") or d.get("address_name") or "")
 
         if lots:
             lines.append("- 반경 500m 내 주차장 (가까운 순):")
@@ -298,7 +390,8 @@ def get_parking_info(place: str) -> str:
                 lines.append(f"  · {l['name']} {l['distance_m']}m | {l['address']} | {l['url']}")
         else:
             lines.append("- 반경 500m 내 등록된 주차장이 없습니다. 매장에 직접 문의해주세요.")
-        lines.append("출처: 카카오 로컬 API. 요금·무료시간·만차 여부는 현장/운영사 확인이 필요합니다.")
+        lines.append("출처: 카카오 로컬 API. 요금·무료시간·만차 여부는 이 서버가 제공하지 않으므로 "
+                     "추측하지 말고 현장/운영사 확인을 안내하세요.")
         return "\n".join(lines)
     except Exception as e:
         return f"주차 정보 조회 중 오류가 발생했습니다: {e}"
@@ -323,6 +416,8 @@ def get_waiting_summary(place: str) -> str:
     if not place:
         return "장소명을 입력해주세요."
     try:
+        if _is_generic(place):
+            return _ask_specific(place)
         d = _find_place(place)
         name = d["place_name"] if d else place
         since = datetime.now(KST) - timedelta(days=183)
